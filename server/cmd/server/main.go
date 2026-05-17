@@ -20,23 +20,39 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
-func handle_ws_request_with_manager(cm *net.ConnectionManager) func(http.ResponseWriter, *http.Request) {
+func checkAuth(sessionToken string) (string, *net.UserInfo, error) {
+	var clientID = uuid.New().String()
+	var userInfo *net.UserInfo = &net.UserInfo{Username: sessionToken}
+
+	return clientID, userInfo, nil
+}
+
+func handleWsRequestWithManager(cm *net.ConnectionManager) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
-		c, err := upgrader.Upgrade(w, r, nil)
+		if sessionToken := r.URL.Query().Get("token"); sessionToken == "" {
+			log.Print("auth: missing token")
+			return
+		}
+
+		clientId, userInfo, err := checkAuth(r.URL.Query().Get("token"))
+		if err != nil {
+			log.Print("auth:", err)
+			return
+		}
+
+		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			log.Print("upgrade:", err)
 			return
 		}
-		var clientId = uuid.New().String()
-		cm.AddClient(clientId, c)
+		cm.AddClient(clientId, conn, userInfo)
 	}
 }
 
-func echo_messages(cm *net.ConnectionManager) {
+func echoMessages(cm *net.ConnectionManager) {
 	for {
 		var msg = <-cm.Receive
-		var client = cm.Client(msg.ClientId)
-		client.Send <- msg.Data
+		cm.SendToClient(msg.ClientId, msg.Data)
 	}
 }
 
@@ -45,16 +61,16 @@ func main() {
 	log.SetFlags(0)
 
 	var addr = fmt.Sprintf("localhost:%d", *port)
-	var ws_endpoint = "/ws"
-	log.Printf("Websocket is available at address ws://%s%s", addr, ws_endpoint)
+	var wsEndpoint = "/ws"
+	log.Printf("Websocket is available at address ws://%s%s", addr, wsEndpoint)
 
 	var cm = net.NewConnectionManager(
 		net.DefaultConnectionConfig(),
 		10,
 	)
-	go echo_messages(cm)
+	go echoMessages(cm)
 
-	var handle_ws_request = handle_ws_request_with_manager(cm)
-	http.HandleFunc(ws_endpoint, handle_ws_request)
+	var handleWsRequest = handleWsRequestWithManager(cm)
+	http.HandleFunc(wsEndpoint, handleWsRequest)
 	log.Fatal(http.ListenAndServe(addr, nil))
 }
