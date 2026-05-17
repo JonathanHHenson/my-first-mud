@@ -24,6 +24,13 @@ type Client struct {
 }
 
 func (c *Client) Send(message OutgoingMessage) bool {
+	// Check if the client is done before sending
+	select {
+	case <-c.done:
+		return false
+	default:
+	}
+
 	select {
 	case c.send <- message:
 		return true
@@ -40,7 +47,7 @@ func (c *Client) close() {
 	c.closeOnce.Do(func() {
 		c.cancelIo()
 		c.conn.Close()
-		println("closed connection for client %s [%s]", c.UserInfo.Username, c.clientId)
+		log.Printf("closed connection for client %s [%s]", c.UserInfo.Username, c.clientId)
 	})
 }
 
@@ -73,7 +80,6 @@ func (c *Client) run(ctx context.Context, recv chan<- IncomingMessage, connConfi
 
 func (c *Client) handleRead(ctx context.Context, recv chan<- IncomingMessage, connConfig *ConnectionConfig) error {
 	for {
-		c.conn.SetReadDeadline(time.Now().Add(connConfig.PongWait))
 		_, message, err := c.conn.ReadMessage()
 		if err != nil {
 			ctxCancelled := ctx.Err() != nil

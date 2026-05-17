@@ -31,12 +31,14 @@ func handleWsRequestWithManager(cm *net.ConnectionManager) func(http.ResponseWri
 	return func(w http.ResponseWriter, r *http.Request) {
 		if sessionToken := r.URL.Query().Get("token"); sessionToken == "" {
 			log.Print("auth: missing token")
+			http.Error(w, "auth: missing token", http.StatusUnauthorized)
 			return
 		}
 
 		clientId, userInfo, err := checkAuth(r.URL.Query().Get("token"))
 		if err != nil {
 			log.Print("auth:", err)
+			http.Error(w, "auth: "+err.Error(), http.StatusUnauthorized)
 			return
 		}
 

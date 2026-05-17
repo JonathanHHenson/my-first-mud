@@ -23,23 +23,14 @@ func NewConnectionManager(config ConnectionConfig, receiveBufferSize int) *Conne
 	}
 }
 
-func (cm *ConnectionManager) IterClients() chan *Client {
-	ch := make(chan *Client)
-	go func() {
-		defer close(ch)
-
-		cm.mu.RLock()
-		clients := make([]*Client, 0, len(cm.clients))
-		for _, client := range cm.clients {
-			clients = append(clients, client)
-		}
-		cm.mu.RUnlock()
-
-		for _, client := range clients {
-			ch <- client
-		}
-	}()
-	return ch
+func (cm *ConnectionManager) IterClients() []*Client {
+	cm.mu.RLock()
+	clients := make([]*Client, 0, len(cm.clients))
+	for _, client := range cm.clients {
+		clients = append(clients, client)
+	}
+	cm.mu.RUnlock()
+	return clients
 }
 
 func (cm *ConnectionManager) SendToClient(clientId string, message OutgoingMessage) bool {
