@@ -4,7 +4,6 @@ import (
 	"context"
 	"log"
 	"sync"
-	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -82,7 +81,10 @@ func (cm *ConnectionManager) AddClient(clientId string, conn *websocket.Conn, us
 		log.Printf("previous connection has been closed for client %s [%s]", userInfo.Username, clientId)
 	}
 
-	go cm.runClient(ioCtx, client)
+	go func() {
+		client.run(ioCtx, cm.Receive, &cm.config)
+		cm.removeClient(client)
+	}()
 }
 
 func (cm *ConnectionManager) removeClient(client *Client) {
@@ -92,84 +94,5 @@ func (cm *ConnectionManager) removeClient(client *Client) {
 	if cm.clients[client.clientId] == client {
 		delete(cm.clients, client.clientId)
 		log.Printf("removed client %s [%s]", client.UserInfo.Username, client.clientId)
-	}
-}
-
-func (cm *ConnectionManager) runClient(ctx context.Context, client *Client) {
-	defer close(client.done)
-	defer cm.removeClient(client)
-
-	client.conn.SetReadLimit(cm.config.MaxMessageSize)
-	client.conn.SetReadDeadline(time.Now().Add(cm.config.PongWait))
-	client.conn.SetPongHandler(func(string) error {
-		client.conn.SetReadDeadline(time.Now().Add(cm.config.PongWait))
-		return nil
-	})
-
-	errCh := make(chan error, 2)
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		errCh <- cm.handleRead(ctx, client)
-	}()
-	go func() {
-		defer wg.Done()
-		errCh <- cm.handleWrite(ctx, client)
-	}()
-
-	<-errCh
-	client.close()
-	wg.Wait()
-}
-
-func (cm *ConnectionManager) handleRead(ctx context.Context, client *Client) error {
-	for {
-		client.conn.SetReadDeadline(time.Now().Add(cm.config.PongWait))
-		_, message, err := client.conn.ReadMessage()
-		if err != nil {
-			ctxCancelled := ctx.Err() != nil
-			websocketClosed := websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway)
-			if ctxCancelled || websocketClosed {
-				log.Printf("closed read for client %s [%s]", client.UserInfo.Username, client.clientId)
-			} else {
-				log.Printf("read error for client %s [%s]: %v", client.UserInfo.Username, client.clientId, err)
-			}
-			return err
-		}
-		select {
-		case cm.Receive <- IncomingMessage{ClientId: client.clientId, Data: message}:
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-		log.Printf("received from client %s [%s]: %s", client.UserInfo.Username, client.clientId, message)
-	}
-}
-
-func (cm *ConnectionManager) handleWrite(ctx context.Context, client *Client) error {
-	ticker := time.NewTicker(cm.config.PingPeriod)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			log.Printf("closed write for client %s [%s]", client.UserInfo.Username, client.clientId)
-			return ctx.Err()
-		case message := <-client.send:
-			client.conn.SetWriteDeadline(time.Now().Add(cm.config.WriteWait))
-			err := client.conn.WriteMessage(websocket.BinaryMessage, message)
-			if err != nil {
-				log.Printf("write error for client %s [%s]: %v", client.UserInfo.Username, client.clientId, err)
-				return err
-			}
-			log.Printf("sent to client %s [%s]: %s", client.UserInfo.Username, client.clientId, message)
-		case <-ticker.C:
-			client.conn.SetWriteDeadline(time.Now().Add(cm.config.WriteWait))
-			err := client.conn.WriteMessage(websocket.PingMessage, nil)
-			if err != nil {
-				log.Printf("ping error for client %s [%s]: %v", client.UserInfo.Username, client.clientId, err)
-				return err
-			}
-		}
 	}
 }
