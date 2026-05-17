@@ -9,65 +9,6 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-type IncomingMessage struct {
-	ClientId string
-	Data     []byte
-}
-
-type OutgoingMessage []byte
-
-type Client struct {
-	clientId string
-	UserInfo *UserInfo
-
-	// Websocket
-	conn *websocket.Conn
-	send chan OutgoingMessage
-
-	// Synchronization
-	cancelIo  context.CancelFunc
-	done      chan struct{}
-	closeOnce sync.Once
-}
-
-func (c *Client) Send(message OutgoingMessage) bool {
-	select {
-	case c.send <- message:
-		return true
-	case <-c.done:
-		return false
-	default:
-		log.Printf("disconnecting slow client %s [%s]: send buffer full", c.UserInfo.Username, c.clientId)
-		c.close()
-		return false
-	}
-}
-
-func (c *Client) close() {
-	c.closeOnce.Do(func() {
-		c.cancelIo()
-		c.conn.Close()
-	})
-}
-
-type ConnectionConfig struct {
-	SendBufferSize int
-	PongWait       time.Duration
-	PingPeriod     time.Duration
-	WriteWait      time.Duration
-	MaxMessageSize int64
-}
-
-func DefaultConnectionConfig() ConnectionConfig {
-	return ConnectionConfig{
-		SendBufferSize: 10,
-		PongWait:       60 * time.Second,
-		PingPeriod:     50 * time.Second,
-		WriteWait:      10 * time.Second,
-		MaxMessageSize: 1024,
-	}
-}
-
 type ConnectionManager struct {
 	clients map[string]*Client
 	mu      sync.RWMutex
@@ -184,6 +125,7 @@ func (cm *ConnectionManager) runClient(ctx context.Context, client *Client) {
 
 func (cm *ConnectionManager) handleRead(ctx context.Context, client *Client) error {
 	for {
+		client.conn.SetReadDeadline(time.Now().Add(cm.config.PongWait))
 		_, message, err := client.conn.ReadMessage()
 		if err != nil {
 			ctxCancelled := ctx.Err() != nil
