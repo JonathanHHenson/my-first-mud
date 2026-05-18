@@ -6,7 +6,6 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 
 	"github.com/JonathanHHenson/my-first-mud/server/internal/net"
@@ -21,10 +20,9 @@ var upgrader = websocket.Upgrader{
 }
 
 func checkAuth(sessionToken string) (string, *net.UserInfo, error) {
-	var clientID = uuid.New().String()
 	var userInfo *net.UserInfo = &net.UserInfo{Username: sessionToken}
 
-	return clientID, userInfo, nil
+	return sessionToken, userInfo, nil
 }
 
 func handleWsRequestWithManager(cm *net.ConnectionManager) func(http.ResponseWriter, *http.Request) {

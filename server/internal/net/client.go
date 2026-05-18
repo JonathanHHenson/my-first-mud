@@ -3,6 +3,7 @@ package net
 import (
 	"context"
 	"log"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -18,15 +19,35 @@ type Client struct {
 	send chan OutgoingMessage
 
 	// Synchronization
-	cancelIo  context.CancelFunc
+	ctx       context.Context
+	cancel    context.CancelFunc
 	done      chan struct{}
 	closeOnce sync.Once
+}
+
+func NewClient(clientId string, conn *websocket.Conn, userInfo *UserInfo, sendBufferSize int) *Client {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Client{
+		clientId: clientId,
+		UserInfo: userInfo,
+
+		conn: conn,
+		send: make(chan OutgoingMessage, sendBufferSize),
+
+		ctx:    ctx,
+		cancel: cancel,
+		done:   make(chan struct{}),
+	}
+}
+
+func (c *Client) Done() <-chan struct{} {
+	return c.done
 }
 
 func (c *Client) Send(message OutgoingMessage) bool {
 	// Check if the client is done before sending
 	select {
-	case <-c.done:
+	case <-c.ctx.Done():
 		return false
 	default:
 	}
@@ -34,25 +55,33 @@ func (c *Client) Send(message OutgoingMessage) bool {
 	select {
 	case c.send <- message:
 		return true
-	case <-c.done:
+	case <-c.ctx.Done():
 		return false
 	default:
 		log.Printf("disconnecting slow client %s [%s]: send buffer full", c.UserInfo.Username, c.clientId)
-		c.close()
+		c.Close()
 		return false
 	}
 }
 
-func (c *Client) close() {
+func (c *Client) Close() {
 	c.closeOnce.Do(func() {
-		c.cancelIo()
+		c.cancel()
 		c.conn.Close()
 		log.Printf("closed connection for client %s [%s]", c.UserInfo.Username, c.clientId)
 	})
 }
 
-func (c *Client) run(ctx context.Context, recv chan<- IncomingMessage, connConfig *ConnectionConfig) {
+func recoverAndLog(name string, c *Client) {
+	if r := recover(); r != nil {
+		log.Printf("panic in %s for client %s [%s]: %v\n%s", name, c.UserInfo.Username, c.clientId, r, debug.Stack())
+	}
+}
+
+func (c *Client) run(recv chan<- IncomingMessage, connConfig *ConnectionConfig) {
 	defer close(c.done)
+	defer c.Close()
+	defer recoverAndLog("run", c)
 
 	c.conn.SetReadLimit(connConfig.MaxMessageSize)
 	c.conn.SetReadDeadline(time.Now().Add(connConfig.PongWait))
@@ -61,28 +90,27 @@ func (c *Client) run(ctx context.Context, recv chan<- IncomingMessage, connConfi
 		return nil
 	})
 
-	errCh := make(chan error, 2)
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		errCh <- c.handleRead(ctx, recv, connConfig)
+		c.handleRead(recv, connConfig)
 	}()
 	go func() {
 		defer wg.Done()
-		errCh <- c.handleWrite(ctx, connConfig)
+		c.handleWrite(connConfig)
 	}()
-
-	<-errCh
-	c.close()
 	wg.Wait()
 }
 
-func (c *Client) handleRead(ctx context.Context, recv chan<- IncomingMessage, connConfig *ConnectionConfig) error {
+func (c *Client) handleRead(recv chan<- IncomingMessage, connConfig *ConnectionConfig) error {
+	defer c.Close()
+	defer recoverAndLog("handleRead", c)
+
 	for {
 		_, message, err := c.conn.ReadMessage()
 		if err != nil {
-			ctxCancelled := ctx.Err() != nil
+			ctxCancelled := c.ctx.Err() != nil
 			websocketClosed := websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway)
 			if ctxCancelled || websocketClosed {
 				log.Printf("closed read for client %s [%s]", c.UserInfo.Username, c.clientId)
@@ -93,22 +121,25 @@ func (c *Client) handleRead(ctx context.Context, recv chan<- IncomingMessage, co
 		}
 		select {
 		case recv <- IncomingMessage{ClientId: c.clientId, Data: message}:
-		case <-ctx.Done():
-			return ctx.Err()
+		case <-c.ctx.Done():
+			return c.ctx.Err()
 		}
 		log.Printf("received from client %s [%s]: %s", c.UserInfo.Username, c.clientId, message)
 	}
 }
 
-func (c *Client) handleWrite(ctx context.Context, connConfig *ConnectionConfig) error {
+func (c *Client) handleWrite(connConfig *ConnectionConfig) error {
+	defer c.Close()
+	defer recoverAndLog("handleWrite", c)
+
 	ticker := time.NewTicker(connConfig.PingPeriod)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-ctx.Done():
+		case <-c.ctx.Done():
 			log.Printf("closed write for client %s [%s]", c.UserInfo.Username, c.clientId)
-			return ctx.Err()
+			return c.ctx.Err()
 		case message := <-c.send:
 			c.conn.SetWriteDeadline(time.Now().Add(connConfig.WriteWait))
 			err := c.conn.WriteMessage(websocket.BinaryMessage, message)

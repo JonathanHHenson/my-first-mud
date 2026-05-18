@@ -1,7 +1,6 @@
 package net
 
 import (
-	"context"
 	"log"
 	"sync"
 
@@ -23,7 +22,7 @@ func NewConnectionManager(config ConnectionConfig, receiveBufferSize int) *Conne
 	}
 }
 
-func (cm *ConnectionManager) IterClients() []*Client {
+func (cm *ConnectionManager) Clients() []*Client {
 	cm.mu.RLock()
 	clients := make([]*Client, 0, len(cm.clients))
 	for _, client := range cm.clients {
@@ -48,17 +47,7 @@ func (cm *ConnectionManager) Client(clientId string) *Client {
 }
 
 func (cm *ConnectionManager) AddClient(clientId string, conn *websocket.Conn, userInfo *UserInfo) {
-	ioCtx, cancelIo := context.WithCancel(context.Background())
-	client := &Client{
-		clientId: clientId,
-		UserInfo: userInfo,
-
-		conn: conn,
-		send: make(chan OutgoingMessage, cm.config.SendBufferSize),
-
-		cancelIo: cancelIo,
-		done:     make(chan struct{}),
-	}
+	client := NewClient(clientId, conn, userInfo, cm.config.SendBufferSize)
 
 	cm.mu.Lock()
 	oldClient := cm.clients[clientId]
@@ -67,13 +56,13 @@ func (cm *ConnectionManager) AddClient(clientId string, conn *websocket.Conn, us
 
 	if oldClient != nil {
 		log.Printf("client %s [%s] is already connected, closing previous connection..", userInfo.Username, clientId)
-		oldClient.close()
-		<-oldClient.done
+		oldClient.Close()
+		<-oldClient.Done()
 		log.Printf("previous connection has been closed for client %s [%s]", userInfo.Username, clientId)
 	}
 
 	go func() {
-		client.run(ioCtx, cm.Receive, &cm.config)
+		client.run(cm.Receive, &cm.config)
 		cm.removeClient(client)
 	}()
 }
