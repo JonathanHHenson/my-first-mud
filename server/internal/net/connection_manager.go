@@ -10,6 +10,7 @@ import (
 type ConnectionManager struct {
 	clients map[string]*Client
 	mu      sync.RWMutex
+	closed  bool
 	config  ConnectionConfig
 	Receive chan IncomingMessage
 }
@@ -50,6 +51,12 @@ func (cm *ConnectionManager) AddClient(clientId string, conn *websocket.Conn, us
 	client := NewClient(clientId, conn, userInfo, cm.config.SendBufferSize)
 
 	cm.mu.Lock()
+	if cm.closed {
+		cm.mu.Unlock()
+		client.Close()
+		return
+	}
+
 	oldClient := cm.clients[clientId]
 	cm.clients[clientId] = client
 	cm.mu.Unlock()
@@ -64,6 +71,37 @@ func (cm *ConnectionManager) AddClient(clientId string, conn *websocket.Conn, us
 		oldClient.Close()
 		<-oldClient.Done()
 		log.Printf("previous connection has been closed for client %s [%s]", userInfo.Username, clientId)
+	}
+}
+
+func (cm *ConnectionManager) Close() {
+	cm.mu.Lock()
+	if cm.closed {
+		cm.mu.Unlock()
+		return
+	}
+	cm.closed = true
+
+	clients := make([]*Client, 0, len(cm.clients))
+	for _, client := range cm.clients {
+		clients = append(clients, client)
+	}
+	cm.mu.Unlock()
+
+	for _, client := range clients {
+		client.Close()
+	}
+
+	for _, client := range clients {
+		<-client.Done()
+	}
+
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	for _, client := range clients {
+		if cm.clients[client.clientId] == client {
+			delete(cm.clients, client.clientId)
+		}
 	}
 }
 
