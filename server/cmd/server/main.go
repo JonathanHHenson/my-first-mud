@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/gorilla/websocket"
 
@@ -72,5 +73,10 @@ func main() {
 
 	var handleWsRequest = handleWsRequestWithManager(cm)
 	http.HandleFunc(wsEndpoint, handleWsRequest)
-	log.Fatal(http.ListenAndServe(addr, nil))
+
+	server := &http.Server{
+		Addr:              addr,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	log.Fatal(server.ListenAndServe())
 }

@@ -19,10 +19,11 @@ type Client struct {
 	send chan OutgoingMessage
 
 	// Synchronization
-	ctx       context.Context
-	cancel    context.CancelFunc
-	done      chan struct{}
-	closeOnce sync.Once
+	ctx     context.Context
+	cancel  context.CancelFunc
+	stateMu sync.Mutex
+	closed  bool
+	done    chan struct{}
 }
 
 func NewClient(clientId string, conn *websocket.Conn, userInfo *UserInfo, sendBufferSize int) *Client {
@@ -45,11 +46,11 @@ func (c *Client) Done() <-chan struct{} {
 }
 
 func (c *Client) Send(message OutgoingMessage) bool {
-	// Check if the client is done before sending
-	select {
-	case <-c.ctx.Done():
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+
+	if c.closed {
 		return false
-	default:
 	}
 
 	select {
@@ -59,17 +60,27 @@ func (c *Client) Send(message OutgoingMessage) bool {
 		return false
 	default:
 		log.Printf("disconnecting slow client %s [%s]: send buffer full", c.UserInfo.Username, c.clientId)
-		c.Close()
+		c.closeLocked()
 		return false
 	}
 }
 
 func (c *Client) Close() {
-	c.closeOnce.Do(func() {
-		c.cancel()
-		c.conn.Close()
-		log.Printf("closed connection for client %s [%s]", c.UserInfo.Username, c.clientId)
-	})
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+
+	c.closeLocked()
+}
+
+func (c *Client) closeLocked() {
+	if c.closed {
+		return
+	}
+
+	c.closed = true
+	c.cancel()
+	c.conn.Close()
+	log.Printf("closed connection for client %s [%s]", c.UserInfo.Username, c.clientId)
 }
 
 func recoverAndLog(name string, c *Client) {

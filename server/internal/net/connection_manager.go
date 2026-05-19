@@ -54,17 +54,17 @@ func (cm *ConnectionManager) AddClient(clientId string, conn *websocket.Conn, us
 	cm.clients[clientId] = client
 	cm.mu.Unlock()
 
+	go func() {
+		client.run(cm.Receive, &cm.config)
+		cm.removeClient(client)
+	}()
+
 	if oldClient != nil {
 		log.Printf("client %s [%s] is already connected, closing previous connection..", userInfo.Username, clientId)
 		oldClient.Close()
 		<-oldClient.Done()
 		log.Printf("previous connection has been closed for client %s [%s]", userInfo.Username, clientId)
 	}
-
-	go func() {
-		client.run(cm.Receive, &cm.config)
-		cm.removeClient(client)
-	}()
 }
 
 func (cm *ConnectionManager) removeClient(client *Client) {
