@@ -9,7 +9,7 @@ import (
 )
 
 type Client struct {
-	Id       uint64
+	ID       uint64
 	UserInfo UserInfo
 
 	conn        *gws.Conn
@@ -24,7 +24,7 @@ type OutboundMessage []byte
 
 func newClient(id uint64, conn *gws.Conn, userInfo UserInfo, config *Config) *Client {
 	return &Client{
-		Id:       id,
+		ID:       id,
 		UserInfo: userInfo,
 
 		conn:   conn,
@@ -94,20 +94,20 @@ func (c *Client) writeLoop() {
 
 			_ = c.conn.SetWriteDeadline(time.Now().Add(c.config.WriteWait))
 			if err := c.conn.WriteMessage(gws.OpcodeBinary, msg); err != nil {
-				slog.Debug("failed to send message", "client_id", c.Id, "message", string(msg), "error", err)
+				slog.Debug("failed to send message", "client_id", c.ID, "message", string(msg), "error", err)
 				c.Close()
 				return
 			}
-			slog.Debug("sent message", "client_id", c.Id, "message", string(msg))
+			slog.Debug("sent message", "client_id", c.ID, "message", string(msg))
 
 		case <-ticker.C:
 			_ = c.conn.SetWriteDeadline(time.Now().Add(c.config.WriteWait))
 			if err := c.conn.WritePing(nil); err != nil {
-				slog.Debug("failed to send ping", "client_id", c.Id, "error", err)
+				slog.Debug("failed to send ping", "client_id", c.ID, "error", err)
 				c.Close()
 				return
 			}
-			slog.Debug("sent ping", "client_id", c.Id)
+			slog.Debug("sent ping", "client_id", c.ID)
 		}
 	}
 }

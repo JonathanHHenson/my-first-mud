@@ -13,7 +13,7 @@ type GameServer struct {
 }
 
 type GameInput struct {
-	ClientId   uint64
+	ClientID   uint64
 	Data       []byte
 	ReceivedAt time.Time
 }
@@ -27,8 +27,8 @@ func NewGameServer(inputBufferSize int) *GameServer {
 
 func (gs *GameServer) RegisterClient(client *Client) {
 	gs.mu.Lock()
-	oldClient := gs.clients[client.Id]
-	gs.clients[client.Id] = client
+	oldClient := gs.clients[client.ID]
+	gs.clients[client.ID] = client
 	gs.mu.Unlock()
 
 	if oldClient != nil && oldClient != client {
@@ -40,8 +40,8 @@ func (gs *GameServer) unregisterClient(client *Client) {
 	gs.mu.Lock()
 	defer gs.mu.Unlock()
 
-	if gs.clients[client.Id] == client {
-		delete(gs.clients, client.Id)
+	if gs.clients[client.ID] == client {
+		delete(gs.clients, client.ID)
 	}
 }
 
@@ -68,7 +68,7 @@ func (gs *GameServer) IsCurrentClient(client *Client) bool {
 	gs.mu.RLock()
 	defer gs.mu.RUnlock()
 
-	return gs.clients[client.Id] == client
+	return gs.clients[client.ID] == client
 }
 
 func (gs *GameServer) AllClients() []*Client {

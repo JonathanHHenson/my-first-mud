@@ -32,13 +32,13 @@ func NewHandler(server *GameServer, auth AuthProvider, config Config) *Handler {
 }
 
 func (h *Handler) OnOpen(conn *gws.Conn) {
-	clientId, userInfo, ok := loginInfoFromConn(conn)
+	clientID, userInfo, ok := loginInfoFromConn(conn)
 	if !ok {
 		conn.WriteClose(1000, []byte("unexpected connection with no client id. Closing..."))
 		return
 	}
 
-	client := newClient(clientId, conn, userInfo, &h.config)
+	client := newClient(clientID, conn, userInfo, &h.config)
 
 	conn.Session().Store("client", client)
 	_ = conn.SetReadDeadline(time.Now().Add(h.config.Deadline()))
@@ -52,7 +52,7 @@ func (h *Handler) OnOpen(conn *gws.Conn) {
 
 	client.Start()
 
-	slog.Info("client connected", "client_id", client.Id)
+	slog.Info("client connected", "client_id", client.ID)
 }
 
 func (h *Handler) OnMessage(conn *gws.Conn, message *gws.Message) {
@@ -62,11 +62,17 @@ func (h *Handler) OnMessage(conn *gws.Conn, message *gws.Message) {
 	if !ok || !h.server.IsCurrentClient(client) {
 		return
 	}
-
-	h.server.Input() <- GameInput{
-		ClientId:   client.Id,
+	input := GameInput{
+		ClientID:   client.ID,
 		Data:       slices.Clone(message.Bytes()),
 		ReceivedAt: time.Now(),
+	}
+
+	select {
+	case h.server.Input() <- input:
+	default:
+		slog.Warn("dropping input due to full game input queue", "client_id", client.ID)
+		client.Close()
 	}
 }
 
@@ -78,7 +84,7 @@ func (h *Handler) OnClose(conn *gws.Conn, err error) {
 
 	client.cleanup()
 
-	slog.Info("client disconnected", "client_id", client.Id, "error", err)
+	slog.Info("client disconnected", "client_id", client.ID, "error", err)
 }
 
 func (h *Handler) OnPing(conn *gws.Conn, payload []byte) {
@@ -97,7 +103,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	clientId, userInfo, err := h.authProvider.Auth(r.URL.Query().Get("token"))
+	clientID, userInfo, err := h.authProvider.Auth(r.URL.Query().Get("token"))
 	if err != nil {
 		slog.Error("auth failed", "error", err)
 		http.Error(w, "auth: "+err.Error(), http.StatusUnauthorized)
@@ -109,19 +115,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		slog.Error("upgrade failed", "error", err)
 		return
 	}
-	conn.Session().Store("client_id", clientId)
+	conn.Session().Store("client_id", clientID)
 	conn.Session().Store("user_info", userInfo)
 
 	go conn.ReadLoop()
 }
 
 func loginInfoFromConn(conn *gws.Conn) (uint64, UserInfo, bool) {
-	clientIdValue, ok := conn.Session().Load("client_id")
+	clientIDValue, ok := conn.Session().Load("client_id")
 	if !ok {
 		return 0, UserInfo{}, false
 	}
 
-	clientId, ok := clientIdValue.(uint64)
+	clientID, ok := clientIDValue.(uint64)
 	if !ok {
 		return 0, UserInfo{}, false
 	}
@@ -136,7 +142,7 @@ func loginInfoFromConn(conn *gws.Conn) (uint64, UserInfo, bool) {
 		return 0, UserInfo{}, false
 	}
 
-	return clientId, userInfo, true
+	return clientID, userInfo, true
 }
 
 func clientFromConn(conn *gws.Conn) (*Client, bool) {

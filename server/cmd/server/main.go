@@ -17,8 +17,8 @@ var debug = flag.Bool("debug", false, "Enable debug mode")
 
 func echoMessages(gs *net.GameServer) {
 	for msg := range gs.Receive() {
-		if ok := gs.Client(msg.ClientId).TrySend(msg.Data); !ok {
-			slog.Debug("failed to send message", "client_id", msg.ClientId)
+		if ok := gs.Client(msg.ClientID).TrySend(msg.Data); !ok {
+			slog.Debug("failed to send message", "client_id", msg.ClientID)
 		}
 	}
 }

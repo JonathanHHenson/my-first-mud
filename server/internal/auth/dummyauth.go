@@ -7,11 +7,11 @@ import (
 )
 
 type DummyAuth struct {
-	nextId atomic.Uint64
+	nextID atomic.Uint64
 }
 
 func (d *DummyAuth) Auth(token string) (uint64, net.UserInfo, error) {
-	id := d.nextId.Add(1)
+	id := d.nextID.Add(1)
 	userInfo := net.UserInfo{Username: token}
 	return id, userInfo, nil
 }
