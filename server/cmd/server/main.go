@@ -3,80 +3,60 @@ package main
 import (
 	"flag"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
-	"github.com/gorilla/websocket"
-
+	"github.com/JonathanHHenson/my-first-mud/server/internal/auth"
 	"github.com/JonathanHHenson/my-first-mud/server/internal/net"
 )
 
 var port = flag.Int("port", 8080, "Port to listen on")
+var debug = flag.Bool("debug", false, "Enable debug mode")
 
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
-		return true // Allow all origins
-	},
-}
-
-func checkAuth(sessionToken string) (string, *net.UserInfo, error) {
-	var userInfo *net.UserInfo = &net.UserInfo{Username: sessionToken}
-
-	return sessionToken, userInfo, nil
-}
-
-func handleWsRequestWithManager(cm *net.ConnectionManager) func(http.ResponseWriter, *http.Request) {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if sessionToken := r.URL.Query().Get("token"); sessionToken == "" {
-			log.Print("auth: missing token")
-			http.Error(w, "auth: missing token", http.StatusUnauthorized)
-			return
+func echoMessages(gs *net.GameServer) {
+	for msg := range gs.Receive() {
+		if ok := gs.Client(msg.ClientId).TrySend(msg.Data); !ok {
+			slog.Debug("failed to send message", "client_id", msg.ClientId)
 		}
-
-		clientId, userInfo, err := checkAuth(r.URL.Query().Get("token"))
-		if err != nil {
-			log.Print("auth:", err)
-			http.Error(w, "auth: "+err.Error(), http.StatusUnauthorized)
-			return
-		}
-
-		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil {
-			log.Print("upgrade:", err)
-			return
-		}
-		cm.AddClient(clientId, conn, userInfo)
-	}
-}
-
-func echoMessages(cm *net.ConnectionManager) {
-	for {
-		var msg = <-cm.Receive
-		cm.SendToClient(msg.ClientId, msg.Data)
 	}
 }
 
 func main() {
 	flag.Parse()
-	log.SetFlags(0)
+	logLevel := slog.LevelInfo
+	if *debug {
+		logLevel = slog.LevelDebug
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: logLevel,
+	})))
 
 	var addr = fmt.Sprintf("localhost:%d", *port)
 	var wsEndpoint = "/ws"
-	log.Printf("Websocket is available at address ws://%s%s", addr, wsEndpoint)
+	var address = fmt.Sprintf("ws://%s%s", addr, wsEndpoint)
+	slog.Info("websocket is available", "address", address)
 
-	var cm = net.NewConnectionManager(
-		net.DefaultConnectionConfig(),
-		10,
+	var gs = net.NewGameServer(10)
+	var ap = &auth.DummyAuth{}
+	var h = net.NewHandler(
+		gs,
+		ap,
+		net.DefaultConfig(),
 	)
-	go echoMessages(cm)
+	go echoMessages(gs)
 
-	var handleWsRequest = handleWsRequestWithManager(cm)
-	http.HandleFunc(wsEndpoint, handleWsRequest)
+	http.HandleFunc(wsEndpoint, h.ServeHTTP)
 
 	server := &http.Server{
 		Addr:              addr,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
-	log.Fatal(server.ListenAndServe())
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		slog.Error("server failed", "error", err)
+		os.Exit(1)
+	} else {
+		slog.Info("server shutdown complete")
+	}
 }
