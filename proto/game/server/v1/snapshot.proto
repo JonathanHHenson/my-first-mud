@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package game.server.v1;
+
+message StateSnapshot {
+  repeated PlayerSnapshot players = 1;
+}
+
+message PlayerSnapshot {
+  uint64 id = 1;
+  string username = 2;
+  Position position = 3;
+}
+
+message Position {
+  double x = 1;
+  double y = 2;
+}

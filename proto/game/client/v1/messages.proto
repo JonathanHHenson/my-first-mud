@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package game.client.v1;
+
+message ClientMessage {
+  oneof message {
+    MoveCommand move = 1;
+  }
+}
+
+message MoveCommand {
+  PositionDelta delta = 1;
+}
+
+message PositionDelta {
+  float dx = 1;
+  float dy = 2;
+}

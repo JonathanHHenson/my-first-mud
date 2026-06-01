@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package game.server.v1;
+
+import "game/server/v1/snapshot.proto";
+
+message ServerMessage {
+  oneof message {
+    StateSnapshot snapshot = 1;
+  }
+}
